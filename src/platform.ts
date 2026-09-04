@@ -11,6 +11,8 @@ export class BNETAPlatform implements DynamicPlatformPlugin {
   readonly Characteristic: typeof Characteristic;
   private readonly cached = new Map<string, PlatformAccessory>();
   private readonly cachedMatter = new Map<string, MatterAccessory>();
+  private readonly registeredMatterThisRun = new Set<string>();
+  private readonly matterReady = new Set<string>();
   private readonly handlers = new Map<string, BNETAAccessory>();
   private readonly reportedMatterState = new Map<string, { on?: boolean; power?: string; energy?: number }>();
   private readonly reportedMissingKeys = new Set<string>();
@@ -37,6 +39,7 @@ export class BNETAPlatform implements DynamicPlatformPlugin {
   async updateMatter(device: PlugConfig, state: PlugState): Promise<void> {
     if (this.config.matter?.enabled === false || !this.api.matter) return;
     const uuid = this.uuid(device);
+    if (!this.matterReady.has(uuid)) return;
     const reported = { ...this.reportedMatterState.get(uuid) };
     try {
       if (reported.on !== state.on) {
@@ -162,6 +165,8 @@ export class BNETAPlatform implements DynamicPlatformPlugin {
       const registered = [...this.cachedMatter.values()];
       if (matter && registered.length) await matter.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, registered);
       this.cachedMatter.clear();
+      this.registeredMatterThisRun.clear();
+      this.matterReady.clear();
       this.reportedMatterState.clear();
       return;
     }
@@ -170,6 +175,8 @@ export class BNETAPlatform implements DynamicPlatformPlugin {
         this.reportedMatterUnavailable = true;
         this.log.info('Matter is not enabled for this bridge; HAP/HomeKit remains active.');
       }
+      this.registeredMatterThisRun.clear();
+      this.matterReady.clear();
       return;
     }
     const wanted = new Set(devices.map(device => this.uuid(device)));
@@ -180,22 +187,18 @@ export class BNETAPlatform implements DynamicPlatformPlugin {
       await matter.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);
       for (const accessory of stale) {
         this.cachedMatter.delete(accessory.UUID);
+        this.registeredMatterThisRun.delete(accessory.UUID);
+        this.matterReady.delete(accessory.UUID);
         this.reportedMatterState.delete(accessory.UUID);
       }
     }
     const wantsElectrical = this.config.matter?.electricalMeasurements !== false;
-    const changedMatterShape = devices
-      .map(device => this.cachedMatter.get(this.uuid(device)))
-      .filter((accessory): accessory is MatterAccessory => Boolean(accessory))
-      .filter(accessory => Boolean(accessory.clusters?.electricalPowerMeasurement) !== wantsElectrical);
-    if (changedMatterShape.length) {
-      await matter.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, changedMatterShape);
-      for (const accessory of changedMatterShape) {
-        this.cachedMatter.delete(accessory.UUID);
-        this.reportedMatterState.delete(accessory.UUID);
-      }
-    }
-    const fresh = devices.filter(device => !this.cachedMatter.has(this.uuid(device))).map(device => ({
+    // Cached Matter definitions contain state but not command-handler functions. Submit a
+    // complete definition once per process so Homebridge can restore those handlers. When
+    // the cluster shape changed, Homebridge performs its own ordered replacement.
+    const registrations: MatterAccessory[] = devices
+      .filter(device => !this.registeredMatterThisRun.has(this.uuid(device)))
+      .map(device => ({
       UUID: this.uuid(device), displayName: device.name,
       deviceType: matter.deviceTypes.OnOffOutlet,
       manufacturer: device.manufacturer ?? 'BNETA / Tuya', model: device.model ?? 'Wi-Fi Smart Plug',
@@ -212,13 +215,53 @@ export class BNETAPlatform implements DynamicPlatformPlugin {
         off: async () => this.handlers.get(this.uuid(device))?.client.setOn(false),
       } },
     }));
-    if (fresh.length) {
-      await matter.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, fresh);
-      for (const accessory of fresh) {
+    if (registrations.length) {
+      await matter.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, registrations);
+      const ready = await this.waitForMatterRegistration(registrations, wantsElectrical);
+      for (const accessory of registrations) {
         this.cachedMatter.set(accessory.UUID, accessory);
         this.reportedMatterState.delete(accessory.UUID);
+        if (ready.has(accessory.UUID)) {
+          this.registeredMatterThisRun.add(accessory.UUID);
+          this.matterReady.add(accessory.UUID);
+        } else {
+          this.registeredMatterThisRun.delete(accessory.UUID);
+          this.matterReady.delete(accessory.UUID);
+          this.log.warn('%s Matter endpoint was not ready after 10 seconds; registration will be retried.', accessory.displayName);
+        }
       }
     }
+  }
+
+  private async waitForMatterRegistration(
+    accessories: MatterAccessory[], wantsElectrical: boolean,
+  ): Promise<Set<string>> {
+    const matter = this.api.matter;
+    const pending = new Set(accessories.map(accessory => accessory.UUID));
+    const ready = new Set<string>();
+    if (!matter) return ready;
+
+    // Homebridge currently dispatches registration asynchronously even though the public
+    // call has resolved. A short yield is also necessary for same-shape cache restoration,
+    // where state already exists before the command handlers have been reattached.
+    await delay(100);
+    const deadline = Date.now() + 10_000;
+    while (pending.size && Date.now() < deadline) {
+      for (const uuid of pending) {
+        try {
+          const onOff = await matter.getAccessoryState(uuid, matter.clusterNames.OnOff);
+          const electrical = await matter.getAccessoryState(uuid, matter.clusterNames.ElectricalPowerMeasurement);
+          if (onOff && Boolean(electrical) === wantsElectrical) {
+            pending.delete(uuid);
+            ready.add(uuid);
+          }
+        } catch (error) {
+          this.log.debug('Waiting for Matter endpoint %s: %s', uuid, msg(error));
+        }
+      }
+      if (pending.size) await delay(100);
+    }
+    return ready;
   }
 
   private uuid(device: PlugConfig): string { return this.api.hap.uuid.generate(`${PLUGIN_NAME}:${device.id}`); }
@@ -239,6 +282,7 @@ export class BNETAPlatform implements DynamicPlatformPlugin {
 
 function msg(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function sameConfig(left: PlugConfig, right: PlugConfig): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+function delay(milliseconds: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, milliseconds)); }
 
 export function matterElectricalState(state: PlugState): {
   power: { voltage?: number; activeCurrent?: number; activePower?: number };

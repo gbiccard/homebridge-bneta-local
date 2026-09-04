@@ -158,11 +158,11 @@ Do not add the same physical plug to a second local-Tuya plugin or Matterbridge 
 
 For the supplied private package on iHost:
 
-1. Copy `homebridge-bneta-local-0.3.0.tgz` into the persistent folder mounted as `/homebridge` in the container.
+1. Copy `homebridge-bneta-local-0.3.1.tgz` into the persistent folder mounted as `/homebridge` in the container.
 2. Open **Homebridge → Settings → Startup & Environment → Startup Script** (or the iHost container console) and install it with:
 
    ```sh
-   npm install -g --omit=dev /homebridge/homebridge-bneta-local-0.3.0.tgz
+   npm install -g --omit=dev /homebridge/homebridge-bneta-local-0.3.1.tgz
    ```
 
 3. Keep that command in Homebridge's Startup Script so the private plugin is restored whenever iHost recreates or updates the container, then restart Homebridge.

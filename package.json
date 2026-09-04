@@ -1,6 +1,6 @@
 {
   "name": "homebridge-bneta-local",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local-LAN Homebridge and Matter support for BNETA/Tuya Wi-Fi plugs",
   "type": "module",
   "license": "MIT",
