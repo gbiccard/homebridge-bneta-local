@@ -1,0 +1,8 @@
+node_modules/
+dist/
+work/
+coverage/
+*.tgz
+.DS_Store
+.env
+.env.*

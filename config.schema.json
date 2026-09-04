@@ -1,0 +1,480 @@
+{
+  "pluginAlias": "BNETALocal",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Configure BNETA/Tuya plugs entirely from this screen. LAN discovery finds devices and optional Tuya Cloud credentials import their names and local keys. Device commands and polling remain local.",
+  "footerDisplay": "Save the settings and restart Homebridge. Docker installations require host networking for LAN discovery and Matter. Keep Tuya Access Secrets and local keys private.",
+  "schema": {
+    "type": "object",
+    "required": ["name"],
+    "properties": {
+      "name": {
+        "title": "Plugin name",
+        "type": "string",
+        "default": "BNETA Local",
+        "required": true
+      },
+      "matter": {
+        "title": "Matter",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Publish discovered plugs through Matter",
+            "description": "Homebridge Matter must also be enabled for the main or child bridge running this plugin.",
+            "type": "boolean",
+            "default": true
+          },
+          "electricalMeasurements": {
+            "title": "Publish voltage, current, power and energy through Matter",
+            "description": "Uses the Matter Electrical Power Measurement and Electrical Energy Measurement clusters with specification-correct units.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "discovery": {
+        "title": "LAN discovery",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Enable automatic LAN discovery",
+            "description": "Listens on UDP 6666, 6667 and 7000 and actively probes Tuya 3.5 devices.",
+            "type": "boolean",
+            "default": true
+          },
+          "timeout": {
+            "title": "Discovery window (seconds)",
+            "type": "integer",
+            "default": 15,
+            "minimum": 3,
+            "maximum": 120,
+            "condition": { "functionBody": "return model.discovery && model.discovery.enabled !== false;" }
+          },
+          "refreshInterval": {
+            "title": "Rediscovery interval (seconds)",
+            "type": "integer",
+            "default": 300,
+            "minimum": 30,
+            "maximum": 86400,
+            "condition": { "functionBody": "return model.discovery && model.discovery.enabled !== false;" }
+          },
+          "categories": {
+            "title": "Allowed Tuya categories",
+            "description": "The defaults include sockets (cz) and power strips (pc). This filter applies when cloud metadata is available.",
+            "type": "array",
+            "uniqueItems": true,
+            "default": ["cz", "pc"],
+            "items": {
+              "title": "Category",
+              "type": "string",
+              "oneOf": [
+                { "title": "Socket (cz)", "enum": ["cz"] },
+                { "title": "Power strip (pc)", "enum": ["pc"] }
+              ]
+            }
+          },
+          "includeDeviceIds": {
+            "title": "Only include these device IDs",
+            "description": "Leave empty to include every discovered socket or power strip.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "title": "Device ID", "type": "string" }
+          },
+          "excludeDeviceIds": {
+            "title": "Exclude these device IDs",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "title": "Device ID", "type": "string" }
+          },
+          "includeCloudDevicesNotSeenOnLan": {
+            "title": "Include cloud devices not seen during LAN discovery",
+            "description": "Useful when Docker blocks UDP. The device must still be reachable locally; configure its private IP under Manual devices if necessary.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "cloud": {
+        "title": "Tuya Cloud onboarding",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Use Tuya Cloud for device names and local keys",
+            "description": "Cloud is used for onboarding only. Plug control remains on the LAN.",
+            "type": "boolean",
+            "default": false
+          },
+          "accessId": {
+            "title": "Access ID / Client ID",
+            "description": "From the Overview page of your Tuya Smart Home cloud project.",
+            "type": "string",
+            "placeholder": "Enter the Tuya project Access ID",
+            "condition": { "functionBody": "return model.cloud && model.cloud.enabled === true;" }
+          },
+          "accessSecret": {
+            "title": "Access Secret / Client Secret",
+            "description": "Stored in Homebridge config.json. Do not share this value.",
+            "type": "string",
+            "placeholder": "Enter the Tuya project Access Secret",
+            "x-schema-form": { "type": "password" },
+            "condition": { "functionBody": "return model.cloud && model.cloud.enabled === true;" }
+          },
+          "region": {
+            "title": "Tuya data centre",
+            "description": "South African Smart Life accounts normally use Central Europe.",
+            "type": "string",
+            "default": "eu",
+            "condition": { "functionBody": "return model.cloud && model.cloud.enabled === true;" },
+            "oneOf": [
+              { "title": "Central Europe — South Africa default", "enum": ["eu"] },
+              { "title": "Western Europe", "enum": ["eu-w"] },
+              { "title": "Western America", "enum": ["us"] },
+              { "title": "Eastern America", "enum": ["us-e"] },
+              { "title": "China", "enum": ["cn"] },
+              { "title": "India", "enum": ["in"] },
+              { "title": "Singapore", "enum": ["sg"] }
+            ]
+          },
+          "refreshInterval": {
+            "title": "Cloud inventory refresh (seconds)",
+            "description": "Local control continues if a later cloud refresh fails.",
+            "type": "integer",
+            "default": 3600,
+            "minimum": 300,
+            "maximum": 86400,
+            "condition": { "functionBody": "return model.cloud && model.cloud.enabled === true;" }
+          }
+        }
+      },
+      "defaultFeatures": {
+        "title": "Default device features",
+        "description": "Persistent settings applied directly to every compatible discovered plug. Unsupported DPS are skipped safely.",
+        "type": "object",
+        "properties": {
+          "powerOnState": {
+            "title": "State after power is restored",
+            "type": "string",
+            "default": "unchanged",
+            "oneOf": [
+              { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+              { "title": "Always off", "enum": ["off"] },
+              { "title": "Always on", "enum": ["on"] },
+              { "title": "Restore previous state", "enum": ["memory"] }
+            ]
+          },
+          "indicatorMode": {
+            "title": "Indicator LED mode",
+            "type": "string",
+            "default": "unchanged",
+            "oneOf": [
+              { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+              { "title": "LED off", "enum": ["none"] },
+              { "title": "LED always on", "enum": ["on"] },
+              { "title": "LED follows relay", "enum": ["relay"] },
+              { "title": "LED opposite to relay", "enum": ["pos"] }
+            ]
+          },
+          "childLock": {
+            "title": "Physical-button child lock",
+            "type": "string",
+            "default": "unchanged",
+            "oneOf": [
+              { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+              { "title": "Enable", "enum": ["enabled"] },
+              { "title": "Disable", "enum": ["disabled"] }
+            ]
+          },
+          "overchargeProtection": {
+            "title": "Overcharge protection",
+            "type": "string",
+            "default": "unchanged",
+            "oneOf": [
+              { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+              { "title": "Enable", "enum": ["enabled"] },
+              { "title": "Disable", "enum": ["disabled"] }
+            ]
+          },
+          "inching": {
+            "title": "Device-managed inching",
+            "type": "object",
+            "properties": {
+              "mode": {
+                "title": "Inching mode",
+                "description": "When enabled, the plug itself switches off after the duration, even if Homebridge is offline.",
+                "type": "string",
+                "default": "unchanged",
+                "oneOf": [
+                  { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+                  { "title": "Enable device-managed inching", "enum": ["enabled"] },
+                  { "title": "Disable device-managed inching", "enum": ["disabled"] }
+                ]
+              },
+              "duration": { "title": "Inching duration (seconds)", "type": "integer", "default": 1, "minimum": 1, "maximum": 65535 },
+              "channel": { "title": "Inching channel", "description": "Use 0 for a single-outlet plug.", "type": "integer", "default": 0, "minimum": 0, "maximum": 127 }
+            }
+          }
+        }
+      },
+      "devices": {
+        "title": "Manual devices, keys and overrides",
+        "description": "Optional with cloud onboarding. Without cloud, add the device ID and 16-character local key. LAN discovery can fill the IP address and protocol version.",
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "title": "Plug",
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "name": { "title": "Display name override", "type": "string", "placeholder": "Desk Plug" },
+            "id": { "title": "Tuya device ID / Virtual ID", "type": "string", "placeholder": "bf0123456789abcdef" },
+            "key": {
+              "title": "Local key",
+              "description": "Exactly 16 characters. Optional if Cloud onboarding supplies it.",
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 16,
+              "x-schema-form": { "type": "password" }
+            },
+            "ip": { "title": "Private LAN IP override", "type": "string", "placeholder": "192.168.1.42" },
+            "version": {
+              "title": "Tuya protocol override",
+              "description": "Leave blank to use the discovered version or 3.3 fallback.",
+              "type": "string",
+              "oneOf": [
+                { "title": "3.1", "enum": ["3.1"] },
+                { "title": "3.2", "enum": ["3.2"] },
+                { "title": "3.3", "enum": ["3.3"] },
+                { "title": "3.4", "enum": ["3.4"] },
+                { "title": "3.5", "enum": ["3.5"] }
+              ]
+            },
+            "manufacturer": { "title": "Manufacturer override", "type": "string", "placeholder": "BNETA / Tuya" },
+            "model": { "title": "Model override", "type": "string", "placeholder": "Wi-Fi Smart Plug" },
+            "serialNumber": { "title": "Serial number override", "type": "string" },
+            "pollInterval": { "title": "Poll interval (seconds)", "type": "integer", "default": 30, "minimum": 5, "maximum": 3600 },
+            "retryInterval": { "title": "Initial retry interval (seconds)", "type": "integer", "default": 5, "minimum": 2, "maximum": 60 },
+            "features": {
+              "title": "Device feature overrides",
+              "description": "Overrides the platform defaults for this plug.",
+              "type": "object",
+              "properties": {
+                "powerOnState": {
+                  "title": "State after power is restored", "type": "string", "default": "unchanged",
+                  "oneOf": [
+                    { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+                    { "title": "Always off", "enum": ["off"] },
+                    { "title": "Always on", "enum": ["on"] },
+                    { "title": "Restore previous state", "enum": ["memory"] }
+                  ]
+                },
+                "indicatorMode": {
+                  "title": "Indicator LED mode", "type": "string", "default": "unchanged",
+                  "oneOf": [
+                    { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+                    { "title": "LED off", "enum": ["none"] },
+                    { "title": "LED always on", "enum": ["on"] },
+                    { "title": "LED follows relay", "enum": ["relay"] },
+                    { "title": "LED opposite to relay", "enum": ["pos"] }
+                  ]
+                },
+                "childLock": {
+                  "title": "Physical-button child lock", "type": "string", "default": "unchanged",
+                  "oneOf": [
+                    { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+                    { "title": "Enable", "enum": ["enabled"] },
+                    { "title": "Disable", "enum": ["disabled"] }
+                  ]
+                },
+                "overchargeProtection": {
+                  "title": "Overcharge protection", "type": "string", "default": "unchanged",
+                  "oneOf": [
+                    { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+                    { "title": "Enable", "enum": ["enabled"] },
+                    { "title": "Disable", "enum": ["disabled"] }
+                  ]
+                },
+                "inching": {
+                  "title": "Device-managed inching",
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "title": "Inching mode", "type": "string", "default": "unchanged",
+                      "oneOf": [
+                        { "title": "Leave device setting unchanged", "enum": ["unchanged"] },
+                        { "title": "Enable device-managed inching", "enum": ["enabled"] },
+                        { "title": "Disable device-managed inching", "enum": ["disabled"] }
+                      ]
+                    },
+                    "duration": { "title": "Inching duration (seconds)", "type": "integer", "default": 1, "minimum": 1, "maximum": 65535 },
+                    "channel": { "title": "Inching channel", "type": "integer", "default": 0, "minimum": 0, "maximum": 127 }
+                  }
+                }
+              }
+            },
+            "dps": {
+              "title": "DPS mapping",
+              "type": "object",
+              "properties": {
+                "switch": { "title": "On/off DPS", "description": "Usually 1 or 20. Leave blank for automatic detection.", "type": "integer", "minimum": 1 },
+                "countdown": { "title": "Countdown DPS", "description": "Usually 9, 2, or 7.", "type": "integer", "minimum": 1 },
+                "energy": { "title": "Accumulated-energy DPS", "description": "Usually 17 or 20.", "type": "integer", "minimum": 1 },
+                "current": { "title": "Current DPS", "description": "Usually 18 or 4.", "type": "integer", "minimum": 1 },
+                "power": { "title": "Power DPS", "description": "Usually 19 or 5.", "type": "integer", "minimum": 1 },
+                "voltage": { "title": "Voltage DPS", "description": "Usually 20 or 6.", "type": "integer", "minimum": 1 },
+                "fault": { "title": "Fault bitmap DPS", "description": "Usually 26 or 29.", "type": "integer", "minimum": 1 },
+                "powerOnState": { "title": "Power-on state DPS", "description": "Usually 38 or 14.", "type": "integer", "minimum": 1 },
+                "overchargeProtection": { "title": "Overcharge protection DPS", "description": "Usually 39.", "type": "integer", "minimum": 1 },
+                "indicatorMode": { "title": "Indicator LED DPS", "description": "Usually 40 or 15.", "type": "integer", "minimum": 1 },
+                "childLock": { "title": "Child-lock DPS", "description": "Usually 41.", "type": "integer", "minimum": 1 },
+                "inching": { "title": "Device-managed inching DPS", "description": "Usually 44 or 19.", "type": "integer", "minimum": 1 },
+                "energyScale": { "title": "Accumulated-energy divisor", "type": "number", "default": 1000, "exclusiveMinimum": 0 },
+                "currentScale": { "title": "Current divisor", "type": "number", "default": 1000, "exclusiveMinimum": 0 },
+                "powerScale": { "title": "Power divisor", "type": "number", "default": 10, "exclusiveMinimum": 0 },
+                "voltageScale": { "title": "Voltage divisor", "type": "number", "default": 10, "exclusiveMinimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "layout": [
+    "name",
+    {
+      "type": "fieldset",
+      "title": "Automatic LAN discovery",
+      "expandable": true,
+      "expanded": true,
+      "items": ["discovery.enabled", "discovery.timeout", "discovery.refreshInterval"]
+    },
+    {
+      "type": "fieldset",
+      "title": "Tuya Cloud onboarding (optional)",
+      "expandable": true,
+      "expanded": true,
+      "items": ["cloud.enabled", "cloud.accessId", "cloud.accessSecret", "cloud.region", "cloud.refreshInterval"]
+    },
+    {
+      "type": "fieldset",
+      "title": "Device selection and Matter",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "matter.enabled",
+        "matter.electricalMeasurements",
+        {
+          "key": "discovery.categories",
+          "type": "checkboxes",
+          "titleMap": [
+            { "name": "Sockets", "value": "cz" },
+            { "name": "Power strips", "value": "pc" }
+          ]
+        },
+        {
+          "key": "discovery.includeDeviceIds",
+          "type": "array",
+          "expandable": true,
+          "expanded": false,
+          "orderable": false,
+          "items": ["discovery.includeDeviceIds[]"]
+        },
+        {
+          "key": "discovery.excludeDeviceIds",
+          "type": "array",
+          "expandable": true,
+          "expanded": false,
+          "orderable": false,
+          "items": ["discovery.excludeDeviceIds[]"]
+        },
+        "discovery.includeCloudDevicesNotSeenOnLan"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Default features for discovered plugs",
+      "description": "These settings are written to every compatible plug. Leave an option unchanged to preserve its current firmware setting.",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "defaultFeatures.powerOnState",
+        "defaultFeatures.indicatorMode",
+        "defaultFeatures.childLock",
+        "defaultFeatures.overchargeProtection",
+        "defaultFeatures.inching.mode",
+        "defaultFeatures.inching.duration",
+        "defaultFeatures.inching.channel"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Manual local keys and device overrides",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        {
+          "key": "devices",
+          "type": "tabarray",
+          "title": "{{ value.name || value.id || 'New plug' }}",
+          "expandable": true,
+          "expanded": false,
+          "orderable": true,
+          "items": [
+            "devices[].name",
+            "devices[].id",
+            "devices[].key",
+            "devices[].ip",
+            "devices[].version",
+            "devices[].pollInterval",
+            "devices[].retryInterval",
+            {
+              "type": "fieldset",
+              "title": "HomeKit information overrides",
+              "expandable": true,
+              "expanded": false,
+              "items": ["devices[].manufacturer", "devices[].model", "devices[].serialNumber"]
+            },
+            {
+              "type": "fieldset",
+              "title": "Device feature overrides",
+              "expandable": true,
+              "expanded": false,
+              "items": [
+                "devices[].features.powerOnState",
+                "devices[].features.indicatorMode",
+                "devices[].features.childLock",
+                "devices[].features.overchargeProtection",
+                "devices[].features.inching.mode",
+                "devices[].features.inching.duration",
+                "devices[].features.inching.channel"
+              ]
+            },
+            {
+              "type": "fieldset",
+              "title": "Advanced DPS mapping",
+              "expandable": true,
+              "expanded": false,
+              "items": [
+                "devices[].dps.switch",
+                "devices[].dps.countdown",
+                "devices[].dps.energy",
+                "devices[].dps.current",
+                "devices[].dps.power",
+                "devices[].dps.voltage",
+                "devices[].dps.fault",
+                "devices[].dps.powerOnState",
+                "devices[].dps.overchargeProtection",
+                "devices[].dps.indicatorMode",
+                "devices[].dps.childLock",
+                "devices[].dps.inching",
+                "devices[].dps.energyScale",
+                "devices[].dps.currentScale",
+                "devices[].dps.powerScale",
+                "devices[].dps.voltageScale"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

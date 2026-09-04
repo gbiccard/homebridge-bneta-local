@@ -1,0 +1,31 @@
+{
+  "name": "homebridge-bneta-local",
+  "version": "0.3.0",
+  "description": "Local-LAN Homebridge and Matter support for BNETA/Tuya Wi-Fi plugs",
+  "type": "module",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": { "node": "^22 || ^24 || ^26", "homebridge": ">=2.2.1" },
+  "keywords": ["homebridge-plugin", "supports-hap", "supports-matter", "bneta", "tuya", "local"],
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "npm run clean && tsc",
+    "lint": "eslint src test --ext .ts",
+    "test": "rimraf work/test-dist && tsc -p tsconfig.test.json && node --test work/test-dist/test/*.test.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": { "tuyapi": "^7.7.1" },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.0",
+    "@typescript-eslint/parser": "^8.31.0",
+    "eslint": "^9.25.0",
+    "homebridge": "^2.2.1",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  },
+  "files": ["dist", "config.schema.json", "README.md", "LICENSE"],
+  "homebridge": { "displayName": "BNETA Local", "platformName": "BNETALocal" }
+}
